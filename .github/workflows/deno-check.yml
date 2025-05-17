@@ -3,6 +3,7 @@ name: Deno Check Every 5min
 on:
   schedule:
     - cron: '*/5 * * * *'
+  workflow_dispatch:
 
 jobs:
   check-deno:
