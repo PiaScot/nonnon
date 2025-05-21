@@ -33,7 +33,7 @@ jobs:
       - name: Run scraping script
         env:
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
-          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+          SERVICE_ROLE_KEY: ${{ secrets.SERVICE_ROLE_KEY }}
           SITE_TABLE:         ${{ secrets.SITE_TABLE }}
           ARTICLE_TABLE:      ${{ secrets.ARTICLE_TABLE }}
         run: |
