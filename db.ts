@@ -13,5 +13,5 @@ export const siteTable = assertEnv("SITE_TABLE");
 export const articleTable = assertEnv("ARTICLE_TABLE");
 export const supabase = createClient(
   assertEnv("SUPABASE_URL"),
-  assertEnv("SERVICE_ROLE_KEY"),
+  assertEnv("SUPABASE_SERVICE_ROLE_KEY"),
 );
