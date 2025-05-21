@@ -39,7 +39,6 @@ jobs:
         run: |
           deno run \
             --lock=deno.lock \
-            --config=deno.json \
             --allow-env \
             --allow-net \
             --allow-read \
