@@ -28,7 +28,7 @@ jobs:
             ${{ runner.os }}-deno-
 
       - name: Generate / update lockfile
-        run: deno cache --lock=deno.lock --lock-write index.ts
+        run: deno cache --lock=deno.lock index.ts
 
       - name: Run scraping script
         env:
