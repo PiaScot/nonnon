@@ -1,6 +1,6 @@
 import { parse } from "jsr:@libs/xml";
 import { randomUA } from "./utils.ts";
-import { getContent } from "./scrape.ts";
+import { getContent } from "./extractor.ts";
 import { articleTable, siteTable, supabase } from "./db.ts";
 
 export interface Article {
