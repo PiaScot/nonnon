@@ -135,6 +135,7 @@ export function baseExtract(html: string, opt: ExtractOpt): string {
           $a.replaceWith(
             `<img 
              src="${href}" 
+             referrerpolicy="no-referrer"
              style="width:100%;height:auto;display:block;" 
              loading="lazy"
            />`,
@@ -155,6 +156,14 @@ export function baseExtract(html: string, opt: ExtractOpt): string {
       $oldImg.replaceWith($newImg);
     });
   }
+  // transVisibleImage などのあと、最後の整形フェーズに入る前で良い
+  root.find("img[src]").each((_i, el) => {
+    const $img = $(el);
+    // すでに referrerpolicy が付いていない場合だけ追加
+    if (!$img.attr("referrerpolicy")) {
+      $img.attr("referrerpolicy", "no-referrer");
+    }
+  });
 
   if (opt.iframeSrcToWithSuffixInItemFix) {
     root.find("iframe").each((_, iframe) => {
@@ -214,7 +223,14 @@ export function baseExtract(html: string, opt: ExtractOpt): string {
   const allow = opt.sanitizedAddTags ?? ["iframe", "script", "noscript"];
   const clean = DOMPurify.sanitize(dirty, {
     ADD_TAGS: allow,
-    ADD_ATTR: ["src", "alt", "href", "controls", "playsinline"],
+    ADD_ATTR: [
+      "src",
+      "alt",
+      "href",
+      "controls",
+      "playsinline",
+      "referrerpolicy",
+    ],
   });
   let output = beautify.html(clean, { indent_size: 2 });
 
