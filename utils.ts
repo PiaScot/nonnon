@@ -12,4 +12,18 @@ const mobileUA = [
   "Mozilla/5.0 (Linux; Android 14; Samsung Galaxy S23) AppleWebKit/537.36 (KHTML, like Gecko) SamsungBrowser/25.0 Chrome/124.0.6367.78 Mobile Safari/537.36",
 ] as const;
 
+export function getDomain(articleURL: string): string {
+  const urlObj = new URL(articleURL);
+  const host = urlObj.hostname.replace(/^www\./, "");
+  let domain = host;
+  if (host === "blog.livedoor.jp") {
+    // pathname = "/pururungazou/" → ["pururungazou"]
+    const segs = urlObj.pathname.split("/").filter(Boolean);
+    if (segs.length > 0) {
+      domain = `${host}/${segs[0]}`;
+    }
+  }
+  return domain;
+}
+
 export const randomUA = () => pcUA[Math.floor(Math.random() * pcUA.length)];

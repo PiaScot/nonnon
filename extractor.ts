@@ -1,13 +1,12 @@
 import { type Cheerio, type CheerioAPI, load } from "npm:cheerio";
 import type { Element } from "npm:domhandler";
 
-import { randomUA } from "./utils.ts";
+import { getDomain, randomUA } from "./utils.ts";
 import Encoding from "npm:encoding-japanese";
 import DOMPurify from "npm:isomorphic-dompurify";
 import beautify from "npm:js-beautify";
 
 import { supabase } from "./db.ts";
-import { scrapeSite } from "./site.ts";
 
 export async function getHtmlText(url: string): Promise<string> {
   const resp = await fetch(url, {
@@ -305,19 +304,11 @@ export function baseExtract(html: string, opt: ExtractOpt): string {
 
 export async function getContent(articleURL: string): Promise<string> {
   try {
-    const urlObj = new URL(articleURL);
-    const host = urlObj.hostname.replace(/^(www|m|amp)\./i, "");
-    let key = host;
-    if (host === "blog.livedoor.jp") {
-      const segs = urlObj.pathname.split("/").filter(Boolean);
-      if (segs.length > 0) {
-        key = `${host}/${segs[0]}`;
-      }
-    }
+    const domain = getDomain(articleURL);
     const { data: siteRows, error: fetchError } = await supabase
       .from("antena_sites")
       .select("rss, category, domain, scrape_options")
-      .eq("domain", key)
+      .eq("domain", domain)
       .limit(1);
 
     if (fetchError) {
@@ -331,7 +322,7 @@ export async function getContent(articleURL: string): Promise<string> {
     }
     const scrapeOptions = siteRows[0].scrape_options;
     if (!scrapeOptions) {
-      console.log(`Error: cannot fetch scrape_options domain => ${key}`);
+      console.log(`Error: cannot fetch scrape_options domain => ${domain}`);
       return "";
     }
 
