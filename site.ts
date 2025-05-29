@@ -1,8 +1,7 @@
 import { parse } from "jsr:@libs/xml";
 import { getDomain, randomUA } from "./utils.ts";
 import { getContent } from "./extractor.ts";
-import { articleTable, siteTable, supabase } from "./db.ts";
-import { SupabaseClient } from "npm:@supabase/supabase-js";
+import { articleTable, supabase } from "./db.ts";
 
 const MAX_SAVE_ARTICLES = 20000;
 
@@ -38,7 +37,6 @@ export interface ScrapeOptions {
 }
 
 export async function scrapeSite(
-  supabase: SupabaseClient,
   site: Site,
 ) {
   if (!site.rss) {
@@ -111,7 +109,7 @@ export async function scrapeSite(
       }
 
       const { data: exists } = await supabase
-        .from(articleTable)
+        .from<Article>(articleTable)
         .select("id")
         .eq("url", link)
         .limit(1);
@@ -141,7 +139,7 @@ export async function scrapeSite(
   );
 
   const { count } = await supabase
-    .from(articleTable)
+    .from<Article>(articleTable)
     .select("id", { count: "exact", head: true });
 
   if ((count ?? 0) > MAX_SAVE_ARTICLES) {

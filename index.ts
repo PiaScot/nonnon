@@ -23,11 +23,11 @@ async function runScraping() {
 
       if (now.getTime() - lastAccess.getTime() >= duration) {
         try {
-          await scrapeSite(supabase, site);
+          await scrapeSite(site);
           await supabase.from<Site>(siteTable).update({
             last_access: now.toISOString(),
           }).eq("id", site.id);
-          console.log(`Successfully scraped and updated: ${site.id}`);
+          console.log(`Successfully scraped and updated: site id = ${site.id}`);
         } catch (e) {
           console.error(`Error scraping ${site.id}: ${e}`);
         }
