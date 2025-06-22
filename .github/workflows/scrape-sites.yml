@@ -35,6 +35,7 @@ jobs:
           SERVICE_ROLE_KEY: ${{ secrets.SERVICE_ROLE_KEY }}
           SITE_TABLE:         ${{ secrets.SITE_TABLE }}
           ARTICLE_TABLE:      ${{ secrets.ARTICLE_TABLE }}
+          GENERAL_REMOVE_TAGS_TABLE: ${{ secrets.GENERAL_REMOVE_TAGS_TABLE }}
         run: |
           deno run \
             --lock=deno.lock \
