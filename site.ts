@@ -29,7 +29,11 @@ async function cleanupOldArticles() {
   }
 }
 
-export async function scrapeSite(allowHosts: Set<string>, site: Site) {
+export async function scrapeSite(
+  site: Site,
+  generalRemoveTags: string[],
+  allowedHosts: Set<string>,
+) {
   if (!site.rss || !site.domain) {
     console.warn(`[SKIP] RSS or Domain not registered for siteId=${site.id}`);
     return;
@@ -79,19 +83,21 @@ export async function scrapeSite(allowHosts: Set<string>, site: Site) {
         continue;
       }
 
-      const removeSelectors: string[] =
-        site.scrape_options?.removeSelectorTags ?? [];
+      const siteSpecificTags = site.scrape_options?.removeSelectorTags ?? [];
+      const finalRemoveSelectors = [
+        ...new Set([...generalRemoveTags, ...siteSpecificTags]),
+      ];
       const content = processArticleHtml(
         mobileHTML,
         link,
-        removeSelectors,
-        allowHosts,
+        finalRemoveSelectors,
+        allowedHosts,
       );
+
       if (!content) {
         console.warn(`  -> ✘ Failed to get content for: ${link}`);
         continue;
       }
-
       let thumbnail = "";
       const $content = load(content);
       $content("img.my-formatted:not([src^='data:'])").each((_, img) => {
@@ -107,7 +113,6 @@ export async function scrapeSite(allowHosts: Set<string>, site: Site) {
             "src",
           ) ?? "";
       }
-
       const pubDate = item.pubDate ?? item["dc:date"] ??
         new Date().toISOString();
       const newArticle = {

@@ -23,6 +23,6 @@ export interface Site {
 }
 
 export interface ScrapeOptions {
-  mainSelectorTag: string;
   removeSelectorTags?: string[];
+  display_mode?: "in_app" | "direct_link";
 }
