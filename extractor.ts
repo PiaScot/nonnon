@@ -1,422 +1,328 @@
-import { type Cheerio, type CheerioAPI, load } from "npm:cheerio";
-import type { Element } from "npm:domhandler";
-
-import { getDomain, randomUA } from "./utils.ts";
-import Encoding from "npm:encoding-japanese";
-import DOMPurify from "npm:isomorphic-dompurify";
+import { type Cheerio, type CheerioAPI, type Element, load } from "npm:cheerio";
 import beautify from "npm:js-beautify";
 
-import { articleTable, siteTable, supabase } from "./db.ts";
-import { ScrapeOptions } from "./site.ts";
+import { randomMobileUA, randomPCUA } from "./utils.ts";
 
 const LAZY = ["data-src", "data-lazy-src", "data-original"];
+const MEDIA_RE = /\.(jpe?g|png|gif|webp|mp4|webm|mov|m4v)(\?.*)?$/i;
+const VIDEO_RE = /\.(mp4|webm|mov|m4v)(\?.*)?$/i;
 
-export async function getHtmlText(url: string): Promise<string> {
+export async function getHtmlText(
+  url: string,
+  layout: "pc" | "mobile",
+): Promise<string> {
+  const origin = new URL(url).origin;
   const resp = await fetch(url, {
     headers: {
-      "User-Agent": randomUA(),
+      "User-Agent": layout === "pc" ? randomPCUA() : randomMobileUA(),
       Accept: "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
       "Accept-Language": "ja-JP,ja;q=0.9",
+      "Referer": origin,
     },
   });
-  if (!resp.ok) throw new Error(`fetch error ${resp.status}`);
-
-  const buf = new Uint8Array(await resp.arrayBuffer());
-  let charset = (
-    resp.headers.get("content-type")?.match(/charset="?([^;" ]+)/i)?.[1] ?? ""
-  ).toUpperCase();
-  if (!charset) {
-    const det = Encoding.detect(buf);
-    charset = typeof det === "string" ? det.toUpperCase() : "UTF8";
-  }
-
-  let text: string;
-  if (charset !== "UTF8" && charset !== "UNICODE") {
-    text = Encoding.convert(buf, {
-      from: charset,
-      to: "UNICODE",
-      type: "string",
-    }) as string;
-  } else {
-    text = new TextDecoder(charset).decode(buf);
-  }
-
+  if (!resp.ok) throw new Error(`fetch error ${resp.status} for ${url}`);
+  const text = await resp.text();
   return removeDuplicateEmptyLine(text);
 }
 
-function removeDuplicateEmptyLine(text: string) {
+function removeDuplicateEmptyLine(text: string): string {
   return text.replace(/\n\s*\n+/g, "\n");
 }
 
-export function baseExtract(
-  html: string,
-  opt: ScrapeOptions,
-  articleURL: string,
-): string {
-  const $: CheerioAPI = load(html);
-  const root: Cheerio<Element> = $(opt.mainSelectorTag) as Cheerio<Element>;
+function findValidMediaUrl($m: Cheerio<Element>): string {
+  const lazySrc = LAZY.map((k) => $m.attr(k)?.trim()).find(Boolean) || "";
+  if (MEDIA_RE.test(lazySrc)) return lazySrc;
+  const src = $m.attr("src")?.trim() || "";
+  if (MEDIA_RE.test(src) && !src.startsWith("data:image")) return src;
+  return "";
+}
 
-  if (!root.length) {
-    console.error(
-      `Error: Can't make root Element specified mainSelector => ${opt.mainSelectorTag}`,
+function absolutizePaths($: CheerioAPI, pageURL: string) {
+  $("[src], [href]").each((_, el) => {
+    const $el = $(el);
+    for (const attrName of ["src", "href"]) {
+      const originalPath = $el.attr(attrName);
+      if (!originalPath) return;
+      const trimmedPath = originalPath.trim();
+      if (
+        /^https?:\/\//i.test(trimmedPath) || /^javascript:/i.test(trimmedPath)
+      ) return;
+      try {
+        const absoluteUrl = new URL(trimmedPath, pageURL).href;
+        $el.attr(attrName, absoluteUrl);
+      } catch (_e) {
+        console.warn(`Could not absolutize malformed path: "${trimmedPath}"`);
+      }
+    }
+  });
+}
+
+function absolutizeCssImports($: CheerioAPI, pageURL: string) {
+  $("style").each((_, styleEl) => {
+    const $style = $(styleEl);
+    const cssContent = $style.html();
+    if (!cssContent || !cssContent.includes("@import")) return;
+    const importRegex = /@import\s+(?:url\((['"]?)(.*?)\1\)|(['"])(.*?)\3);/g;
+    const newCssContent = cssContent.replace(
+      importRegex,
+      (match, _q1, path1, _q2, path2) => {
+        const originalPath = (path1 || path2).trim();
+        if (
+          !originalPath || /^(https?:)?\/\//i.test(originalPath)
+        ) return match;
+        try {
+          return `@import url("${new URL(originalPath, pageURL).href}");`;
+        } catch (_e) {
+          return match;
+        }
+      },
     );
-    return "";
-  }
-
-  if (opt.removeSelectorTags) {
-    for (const sel of opt.removeSelectorTags) {
-      root.find(sel).remove();
-    }
-  }
-
-  filterScriptTags($, root);
-  unwrapAnchoredMedia($, root);
-  convertVideoJs($, root);
-  unwrapVideoWrappers($, root);
-  normalizeImages($, root);
-  normalizeLoneVideos($, root);
-  convertImgurEmbeds($, root);
-  removeEmptyStyledBlocks($, root);
-  unwrapNoscript($, root);
-  collapseBr($, root);
-  absolutizeSrc($, root, articleURL);
-  const dirty = root.map((_, el) => $(el).html() ?? "")
-    .get()
-    .join("\n");
-
-  const allow = ["iframe", "script", "noscript"];
-  const clean = DOMPurify.sanitize(dirty, {
-    ADD_TAGS: allow,
-    ADD_ATTR: [
-      "src",
-      "alt",
-      "href",
-      "controls",
-      "playsinline",
-      "referrerpolicy",
-    ],
-  });
-  const output = beautify.html(clean, { indent_size: 2 });
-  return removeDuplicateEmptyLine(output.trim());
-}
-
-export async function getContent(articleURL: string): Promise<string> {
-  try {
-    const domain = getDomain(articleURL);
-    const { data: siteRows, error: fetchError } = await supabase
-      .from(siteTable)
-      .select("*")
-      .eq("domain", domain)
-      .limit(1);
-
-    if (fetchError) {
-      console.error(fetchError);
-      Deno.exit(1);
-    }
-
-    if (!siteRows.length) {
-      console.log("Failed to fetch record with equal domain in getContent()");
-      Deno.exit(1);
-    }
-    const sopt = siteRows[0].scrape_options;
-    if (!sopt.mainSelectorTag) {
-      console.log("Not found mainSelectorTag");
-      return "";
-    }
-
-    const html = await getHtmlText(articleURL);
-    if (!html) throw new Error("Failed to get html");
-
-    const tidy = baseExtract(html, sopt, articleURL);
-    return tidy || "";
-  } catch (err) {
-    console.error(err);
-    return "";
-  }
-}
-
-function unwrapAnchoredMedia($: CheerioAPI, root: Cheerio<Element>) {
-  const MEDIA_RE = /\.(jpe?g|png|gif|webp|mp4|webm|mov|m4v)(\?.*)?$/i;
-  const VIDEO_RE = /\.(mp4|webm|mov|m4v)(\?.*)?$/i;
-
-  root.find("a").each((_, a) => {
-    const $a = $(a);
-
-    let url = ($a.attr("href") || "").trim();
-    if (!MEDIA_RE.test(url)) {
-      const $m = $a.find("img,video,source").first();
-      url = ($m.attr("src")?.trim() ?? "") ||
-        LAZY.map((k) => $m.attr(k)?.trim()).find(Boolean) || "";
-    }
-    if (!MEDIA_RE.test(url)) return;
-
-    if (VIDEO_RE.test(url)) {
-      $a.replaceWith(
-        `<video src="${url}" class="my-formatted" controls playsinline style="width:100%;height:auto;display:block;"></video>`,
-      );
-    } else {
-      $a.replaceWith(
-        `<img src="${url}" class="my-formatted" referrerpolicy="no-referrer" style="width:100%;height:auto;display:block;" loading="lazy" />`,
-      );
-    }
+    $style.html(newCssContent);
   });
 }
-function unwrapVideoWrappers($: CheerioAPI, root: Cheerio<Element>) {
-  root.find(":is(div,figure,section):has(> video)")
-    .filter((_, el) => $(el).children("video").length === 1)
-    .each((_, el) => {
-      const $wrap = $(el);
-      const $video = $wrap.children("video").first();
-      $wrap.replaceWith($video);
-    });
 
-  root.find("video:has(> video)").each((_, outer) => {
-    const $outer = $(outer);
-    const $inner = $outer.children("video").first();
-
-    const src = $inner.attr("src") ||
-      $inner.find("source[type='video/mp4']").attr("src") || "";
-    if (src) $outer.attr("src", src);
-
-    $inner.remove();
-  });
-}
-function convertVideoJs($: CheerioAPI, root: Cheerio<Element>) {
-  root.find("video-js").each((_, vjs) => {
-    const $vjs = $(vjs);
-
-    const src = ($vjs.attr("src") || "").trim() ||
-      $vjs.find("source[type*='mp4'],source[src$='.mp4']")
-        .first().attr("src")?.trim() ||
-      "";
-
+function removeScript($: CheerioAPI, allowHosts: Set<string>) {
+  $("script").each((_, el) => {
+    const $script = $(el);
+    const src = $script.attr("src")?.trim();
     if (!src) {
-      // console.warn("convertVideoJs: src not found – skipped:\n", $.html($vjs));
+      $script.remove();
       return;
     }
-
-    const $video = $("<video>")
-      .attr({
-        src,
-        controls: "",
-        playsinline: "",
-        loading: "lazy",
-        style: "max-width:100%;height:auto;display:block",
-      })
-      .addClass("my-formatted");
-
-    const poster = $vjs.attr("poster");
-    if (poster) $video.attr("poster", poster);
-
-    $vjs.replaceWith($video);
+    try {
+      const hostname =
+        new URL(src.startsWith("//") ? `https:${src}` : src).hostname;
+      if (!allowHosts.has(hostname)) $script.remove();
+    } catch (_e) {
+      $script.remove();
+    }
   });
 }
 
-function normalizeImages($: CheerioAPI, root: Cheerio<Element>) {
-  root.find("img:not(.my-formatted)").each((_, img) => {
-    const $img = $(img);
-    let src = ($img.attr("src") || "").trim();
+function removeSelector($: CheerioAPI, removeSelectors: string[]) {
+  for (const selector of removeSelectors) {
+    $(selector).remove();
+  }
+}
 
-    const isDummy = !src || src.startsWith("data:") || src === "#" ||
-      src.startsWith("about:");
-    if (isDummy) {
-      src = LAZY.map((k) => $img.attr(k)?.trim()).find(Boolean) || "";
+function convertImgurEmbeds($: CheerioAPI) {
+  $('script[src*="imgur.com/js/embed.js"]').remove();
+  $("blockquote.imgur-embed-pub[data-id]").each((_, el) => {
+    const id = $(el).attr("data-id")?.trim();
+    if (id) {
+      $(el).replaceWith(
+        `<img src="https://i.imgur.com/${id}.jpg" loading="lazy" referrerpolicy="no-referrer" />`,
+      );
     }
+  });
+}
+
+function convertRedditEmbeds($: CheerioAPI) {
+  $("blockquote.reddit-embed-bq, blockquote.reddit-card").each((_, el) => {
+    const $blockquote = $(el);
+    const postUrl = $blockquote.find("a").first().attr("href");
+    if (!postUrl) return;
+    const embedUrl = new URL(postUrl);
+    embedUrl.searchParams.set("embed", "true");
+    const iframeTag =
+      `<iframe src="${embedUrl.toString()}" width="315" height="360" style="border:none; max-width:100%;" scrolling="no" allowfullscreen></iframe>`;
+    $blockquote.replaceWith(iframeTag);
+  });
+}
+
+function unwrapAnchoredMedia($: CheerioAPI) {
+  $("a, p, div.wp-video").each((_, element) => {
+    const $el = $(element as Element);
+    let url = "";
+    if (element.tagName === "a") {
+      const href = ($el.attr("href") || "").trim();
+      let urlFound = false;
+      try {
+        const params = new URL(href).searchParams;
+        for (const value of params.values()) {
+          if (value.toLowerCase().startsWith("http") && MEDIA_RE.test(value)) {
+            url = value;
+            urlFound = true;
+            break;
+          }
+        }
+      } catch (_e) { /* noop */ }
+      if (!urlFound && MEDIA_RE.test(href)) {
+        url = href;
+        urlFound = true;
+      }
+      if (!urlFound) {
+        const $m = $el.find("img, video, source").first();
+        if ($m.length) {
+          url = findValidMediaUrl($m);
+          if (url) urlFound = true;
+        }
+      }
+      if (!urlFound) {
+        const textContent = $el.text().trim();
+        if (textContent.startsWith("http") && MEDIA_RE.test(textContent)) {
+          url = textContent;
+        }
+      }
+    } else {
+      const $mediaElements = $el.find("img, video, source");
+      if ($mediaElements.length === 0) return;
+      const hasSignificantText = $el.contents().toArray().some((n) =>
+        n.type === "text" && n.data.trim().length > 0
+      );
+      if (hasSignificantText) return;
+      $mediaElements.each((_, mediaEl) => {
+        url = findValidMediaUrl($(mediaEl as Element));
+        if (url) return false;
+      });
+    }
+    if (!MEDIA_RE.test(url)) return;
+    const replacementTag = VIDEO_RE.test(url)
+      ? `<video src="${url}" class="my-formatted" referrerpolicy="no-referrer" controls playsinline style="width:100%;height:auto;display:block;"></video>`
+      : `<img src="${url}" class="my-formatted" referrerpolicy="no-referrer" style="width:100%;height:auto;display:block;" loading="lazy" />`;
+    $el.replaceWith(replacementTag);
+  });
+  $("video:has(source)").each((_, videoEl) => {
+    const $video = $(videoEl as Element);
+    if ($video.attr("src")) return;
+    const sourceSrc = $video.find("source[src]").first().attr("src")?.trim();
+    if (sourceSrc) {
+      $video.attr("src", sourceSrc).addClass("my-formatted").attr(
+        "controls",
+        "",
+      ).attr("playsinline", "").css({
+        width: "100%",
+        height: "auto",
+        display: "block",
+      }).empty();
+    }
+  });
+}
+
+function convertVideoJs($: CheerioAPI) {
+  $("video-js").each((_, vjsElement) => {
+    const $vjs = $(vjsElement);
+    const src = $vjs.find('source[type="video/mp4"]').attr("src")?.trim();
+    const poster = $vjs.attr("poster")?.trim();
     if (!src) {
-      // console.warn(
-      //   "normalizeImages: <img> without src - removed:",
-      //   $.html($img),
-      // );
+      $vjs.remove();
+      return;
+    }
+    const replacementTag = `<video src="${src}" poster="${
+      poster || ""
+    }" class="my-formatted" controls playsinline style="width:100%;height:auto;display:block;" referrerpolicy="no-referrer"></video>`;
+    $vjs.replaceWith(replacementTag);
+  });
+}
+
+function normalizeImages($: CheerioAPI) {
+  $("img:not(.my-formatted)").each((_, img) => {
+    const $img = $(img);
+    const src = findValidMediaUrl($img);
+    if (!src) {
       $img.remove();
       return;
     }
-
-    const $new = $("<img>")
-      .attr({
-        src,
-        loading: "lazy",
-        referrerpolicy: "no-referrer",
-        style: "max-width:100%;height:auto;display:block",
-      })
-      .addClass("my-formatted");
-
+    const $new = $("<img>").attr({
+      src,
+      loading: "lazy",
+      referrerpolicy: "no-referrer",
+      style: "max-width:100%;height:auto;display:block",
+    }).addClass("my-formatted");
     $img.replaceWith($new);
   });
 }
 
-function normalizeLoneVideos($: CheerioAPI, root: Cheerio<Element>) {
-  root.find("video:not(.my-formatted)").each((_, v) => {
-    const $v = $(v);
-
-    let src = $v.attr("src")?.trim() || "";
-    if (!src) {
-      src = $v.find("source[type*='mp4'],source[src$='.mp4']")
-        .first().attr("src")?.trim() || "";
-      if (!src) {
-        // console.warn(
-        //   "normalizeLoneVideos: <video> w/o src removed",
-        //   $.html($v),
-        // );
-        $v.remove();
-        return;
-      }
-    }
-
-    const $new = $("<video>")
-      .attr({
-        src,
-        controls: "",
-        playsinline: "",
-        style: "max-width:100%;height:auto;display:block",
-        loading: "lazy",
-      })
-      .addClass("my-formatted");
-
-    $v.replaceWith($new);
-  });
-}
-
-function convertImgurEmbeds($: CheerioAPI, root: Cheerio<Element>) {
-  root.find('script[src*="imgur.com/js/embed.js"]').remove();
-  root.find("blockquote.imgur-embed-pub[data-id]").each((_, el) => {
-    const id = $(el).attr("data-id")?.trim();
-    $(el).replaceWith(
-      `<img src="https://i.imgur.com/${id}.jpg" loading="lazy" referrerpolicy="no-referrer" />`,
-    );
-  });
-}
-
-function removeEmptyStyledBlocks($: CheerioAPI, root: Cheerio<Element>) {
-  const SKIP_TAGS = new Set([
-    "img",
-    "video",
-    "iframe",
-    "embed",
-    "source",
-    "audio",
-    "picture",
-    "canvas",
-  ]);
-  root.find("[style]").each((_, el) => {
-    const tag = (el as Element).tagName?.toLowerCase() || "";
-    if (SKIP_TAGS.has(tag)) return;
-    const $el = $(el);
-
-    const hasChild = $el.children().length > 0;
-    const hasVisibleChild =
-      $el.find("img,video,iframe,source,embed").length > 0;
-    const plainText = $el.text().replace(/\s|&nbsp;/g, "");
-
-    if (!hasChild && !hasVisibleChild && plainText === "") {
-      $el.remove();
-    }
-  });
-}
-
-function unwrapNoscript($: CheerioAPI, root: Cheerio<Element>) {
-  root.find("noscript").each((_i, el) => {
-    const $ns = $(el);
-    const inner = $ns.html() ?? "";
-    const $$ = load(inner);
-    const $if = $$("iframe").first();
-
-    if ($if.length) {
-      if ($if.attr("data-src") && !$if.attr("src")) {
-        $if.attr("src", $if.attr("data-src"));
-      }
-      $ns.replaceWith($if);
-    } else {
-      $ns.remove();
-    }
-  });
-}
-
-function collapseBr($: CheerioAPI, root: Cheerio<Element>, limit = 2) {
-  let streak: Cheerio<Element>[] = [];
-
-  root.find("br").each((_, br) => {
-    const $br = $(br);
-    const prev = $br.prev();
-    if (prev.length && prev[0].tagName?.toLowerCase() === "br") {
-      streak.push($br);
-    } else {
-      if (streak.length >= limit) {
-        streak.slice(limit - 1).forEach(($b) => $b.remove());
-      }
-      streak = [$br];
-    }
-  });
-
-  if (streak.length >= limit) {
-    streak.slice(limit).forEach(($b) => $b.remove());
-  }
-}
-
-function absolutizeSrc(
-  $: CheerioAPI,
-  root: Cheerio<Element>,
-  pageURL: string,
-) {
-  const origin = new URL(pageURL).origin;
-
-  root.find("[src]").each((_, el) => {
-    const $el = $(el);
-    let src = ($el.attr("src") || "").trim();
-    if (!src) return;
-
-    if (/^https?:\/\//i.test(src)) return;
-
-    if (src.startsWith("//")) {
-      src = new URL(pageURL).protocol + src;
-    } else if (src.startsWith("/")) {
-      src = origin + src;
-    } else if (!/^https?:\/\//i.test(src)) {
-      src = new URL(src, pageURL).href;
-    }
-
-    $el.attr("src", src);
-  });
-}
-
-function filterScriptTags(
-  $: CheerioAPI,
-  root: Cheerio<Element>,
-  pageURL?: string,
-) {
-  const ALLOW_SCRIPT_HOSTS = new Set([
-    "platform.twitter.com",
-    "www.youtube.com",
-    "www.instagram.com",
-    "i.imgur.com",
-    "imgur.com",
-  ]);
-
-  let baseOrigin: string | undefined;
-  if (pageURL) {
-    try {
-      baseOrigin = new URL(pageURL).origin;
-    } catch {
-    }
-  }
-
-  root.find("script").each((_i, el) => {
-    const $s = $(el);
-    let src = $s.attr("src")?.trim();
-
-    if (!src) {
-      $s.remove();
+function normalizeIframes($: CheerioAPI, allowHosts: Set<string>) {
+  $("iframe").each((_, element) => {
+    const $iframe = $(element);
+    const finalUrl = $iframe.attr("data-src")?.trim() ||
+      $iframe.attr("src")?.trim();
+    if (!finalUrl) {
+      $iframe.remove();
       return;
     }
-
-    if (src.startsWith("//")) src = "https:" + src;
-
+    $iframe.attr("src", finalUrl).removeAttr("data-src");
     try {
-      const abs = baseOrigin ? new URL(src, baseOrigin) : new URL(src);
+      const hostname = new URL(finalUrl).hostname;
+      if (allowHosts.has(hostname)) {
+        $iframe.attr({ width: "315", height: "360", loading: "lazy" }).css(
+          "border",
+          "none",
+        );
+      }
+    } catch (_e) { /* noop */ }
+  });
+}
 
-      const host = abs.hostname;
-      if (!ALLOW_SCRIPT_HOSTS.has(host)) $s.remove();
-    } catch {
-      $s.remove();
+function removeVisuallyEmptyPTags($: CheerioAPI) {
+  $("p").each((_, p) => {
+    const $p = $(p);
+    if ($p.find("a, img, video, iframe, input").length > 0) return;
+    if ($p.text().trim() === "") $p.remove();
+  });
+}
+
+function deduplicateMedia($: CheerioAPI) {
+  const seenMediaUrls = new Set<string>();
+  $("img.my-formatted, video.my-formatted").each((_, element) => {
+    const $el = $(element);
+    const src = $el.attr("src");
+    if (!src) return;
+    if (seenMediaUrls.has(src)) {
+      $el.remove();
+    } else {
+      seenMediaUrls.add(src);
     }
   });
+}
+
+function collapseBr($: CheerioAPI, limit = 3) {
+  $("br").each((_i, br) => {
+    let current = $(br);
+    let count = 1;
+    while (current.next().is("br")) {
+      current = current.next();
+      count++;
+    }
+    if (count >= limit) {
+      current.prevAll("br").slice(0, count - limit + 1).remove();
+    }
+  });
+}
+
+// --- メイン処理関数 ---
+
+export function processArticleHtml(
+  html: string,
+  pageURL: string,
+  removeSelectors: string[],
+  allowHosts: Set<string>,
+): string {
+  const $ = load(html);
+
+  // 1. パスとインポートを絶対化
+  absolutizePaths($, pageURL);
+  absolutizeCssImports($, pageURL);
+
+  // 2. 不要なスクリプトとセレクタを削除
+  removeScript($, allowHosts);
+  removeSelector($, removeSelectors);
+
+  // 3. 各種埋め込みコンテンツとメディアを正規化・整形
+  convertImgurEmbeds($);
+  convertRedditEmbeds($);
+  unwrapAnchoredMedia($);
+  convertVideoJs($);
+  normalizeImages($);
+  normalizeIframes($, allowHosts);
+
+  // 4. クリーンアップ処理
+  removeVisuallyEmptyPTags($);
+  deduplicateMedia($);
+  collapseBr($, 4);
+
+  // 5. 最終的なHTMLを生成して返す
+  const raw = removeDuplicateEmptyLine($.html().trim());
+  return beautify.html(raw, { indent_size: 2 });
 }

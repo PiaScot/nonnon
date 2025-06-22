@@ -25,4 +25,6 @@ export function getDomain(articleURL: string): string {
   return domain;
 }
 
-export const randomUA = () => pcUA[Math.floor(Math.random() * pcUA.length)];
+export const randomPCUA = () => pcUA[Math.floor(Math.random() * pcUA.length)];
+export const randomMobileUA = () =>
+  mobileUA[Math.floor(Math.random() * mobileUA.length)];

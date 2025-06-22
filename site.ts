@@ -1,157 +1,142 @@
+import { load } from "npm:cheerio";
+
 import { parse } from "jsr:@libs/xml";
-import { getDomain, randomUA } from "./utils.ts";
-import { getContent } from "./extractor.ts";
-import { articleTable, supabase } from "./db.ts";
+import { articleTable, siteTable, supabase } from "./db.ts";
+import type { Site } from "./types.ts";
+import { randomMobileUA } from "./utils.ts";
+import { getHtmlText, processArticleHtml } from "./extractor.ts";
 
-const MAX_SAVE_ARTICLES = 20000;
+const MAX_SAVE_ARTICLES = 200000;
 
-// brdige supabase <-> ts code ${articleTable} type
-export interface Article {
-  id: number;
-  site_id: number | null;
-  title: string | null;
-  url: string | null;
-  category: string | null;
-  content: string | null;
-  pub_date: string | null; // ISO8601 string (timestamp with time zone)
-  thumbnail: string | null;
-  created_at: string | null; // ISO8601 string (timestamp with time zone)
-}
-
-// bridge supabase <-> ts code ${siteTable} type
-export interface Site {
-  id: number;
-  url: string | null;
-  title: string | null;
-  rss: string | null;
-  category: string | null;
-  last_access: string; // ISO8601 string (timestamp with time zone)
-  duration_access: number | null;
-  scrape_options: ScrapeOptions | null;
-  domain: string | null;
-}
-
-export interface ScrapeOptions {
-  mainSelectorTag: string;
-  removeSelectorTags?: string[];
-}
-
-export async function scrapeSite(
-  site: Site,
-) {
-  if (!site.rss) {
-    console.log(`Error: Not register rss in ${site.id}`);
+async function cleanupOldArticles() {
+  const { count, error: countError } = await supabase.from(articleTable).select(
+    "id",
+    { count: "exact", head: true },
+  );
+  if (countError) {
+    console.error(`Failed to count articles: ${countError.message}`);
     return;
   }
+  if (count && count > MAX_SAVE_ARTICLES) {
+    const limit = count - MAX_SAVE_ARTICLES;
+    console.log(`Limit exceeded. Deleting oldest ${limit} articles...`);
+    const { data: oldArticles, error: selectError } = await supabase.from(
+      articleTable,
+    ).select("id").order("pub_date", { ascending: true }).limit(limit);
+    if (selectError || !oldArticles || oldArticles.length === 0) return;
+    const idsToDelete = oldArticles.map((a: any) => a.id);
+    await supabase.from(articleTable).delete().in("id", idsToDelete);
+  }
+}
+
+export async function scrapeSite(allowHosts: Set<string>, site: Site) {
+  if (!site.rss || !site.domain) {
+    console.warn(`[SKIP] RSS or Domain not registered for siteId=${site.id}`);
+    return;
+  }
+  console.log(`--- Scraping Site ID: ${site.id} (${site.title}) ---`);
+
   const res = await fetch(site.rss, {
     headers: {
-      "User-Agent": randomUA(),
-      Accept: "application/rss+xml,application/xml;q=0.9,*/*;q=0.8",
+      "User-Agent": randomMobileUA(),
+      Accept: "application/rss+xml,application/xml",
     },
   });
   if (!res.ok) {
-    console.log(`HTTP ${res.status}`);
+    console.error(`  -> HTTP ${res.status} for RSS: ${site.rss}`);
     return;
   }
+
   const xml = parse(await res.text());
   const chan = xml.rss?.channel ?? xml["rdf:RDF"]?.channel;
-  const rawItems = (() => {
-    const r = chan?.item ?? xml["rdf:RDF"]?.item ?? [];
-    return Array.isArray(r) ? r : [r];
-  })();
-  const siteTitle = chan?.title ?? "";
+  const rawItems = Array.isArray(chan?.item)
+    ? chan.item
+    : (chan?.item ? [chan.item] : []);
+
+  if (rawItems.length === 0) {
+    console.warn("  -> No items found in RSS feed.");
+    return;
+  }
 
   const start = performance.now();
   for (const item of rawItems) {
-    try {
-      const link = item.link?.split("?")[0] ?? "";
-      const title = item.title ?? "";
-      const pubDate = item.pubDate ?? item["dc:date"] ?? "";
+    const link = (item.link?.split("?")[0] ?? "").trim();
+    if (!link) continue;
 
-      const content = await getContent(link);
+    try {
+      const { data: existingArticle } = await supabase.from(articleTable)
+        .select("id").eq("url", link).maybeSingle();
+      if (existingArticle) {
+        console.log(
+          `  -> Article already exists. Stopping for this site. URL: ${link}`,
+        );
+        break;
+      }
+
+      const mobileHTML = await getHtmlText(link, "mobile");
+      if (!mobileHTML) {
+        console.warn(`  -> ✘ Failed to fetch HTML for: ${link}`);
+        continue;
+      }
+
+      const removeSelectors: string[] =
+        site.scrape_options?.removeSelectorTags ?? [];
+      const content = processArticleHtml(
+        mobileHTML,
+        link,
+        removeSelectors,
+        allowHosts,
+      );
       if (!content) {
-        console.warn(`✘ Failed to get articles site id = ${site.id}`);
+        console.warn(`  -> ✘ Failed to get content for: ${link}`);
         continue;
       }
 
       let thumbnail = "";
-      const siteDomain = getDomain(link);
-
-      const imgTagRegex = /<img[^>]+src=[\"\']([^\"\']+)[\"\']/gi;
-      let match: RegExpExecArray | null = imgTagRegex.exec(content);
-      while (match) {
-        const src = match[1];
-        if (src) {
-          try {
-            const imageUrl = new URL(src, link);
-            if (siteDomain && imageUrl.hostname.includes(siteDomain)) {
-              thumbnail = imageUrl.toString();
-              break;
-            }
-          } catch (e) {
-            console.warn(e);
-          }
+      const $content = load(content);
+      $content("img.my-formatted:not([src^='data:'])").each((_, img) => {
+        const src = $content(img).attr("src");
+        if (src && site.domain && src.includes(site.domain)) {
+          thumbnail = src;
+          return false;
         }
-        match = imgTagRegex.exec(content);
-      }
-
+      });
       if (!thumbnail) {
-        const imageUrlRegex =
-          /(https?:\/\/[^\s<>"]+\.(?:jpg|png|gif|jpeg|webp))(?:\?.*?)?(?:#.*?)?/gi;
-        const urlMatch = imageUrlRegex.exec(content);
-        if (urlMatch?.[1]) {
-          thumbnail = urlMatch[1];
-        }
+        thumbnail =
+          $content("img.my-formatted:not([src^='data:'])").first().attr(
+            "src",
+          ) ?? "";
       }
 
-      if (!thumbnail) {
-        console.warn(`Not found thumbnail site id = ${site.id}`);
-      }
-
-      const { data: exists } = await supabase
-        .from<Article>(articleTable)
-        .select("id")
-        .eq("url", link)
-        .limit(1);
-
-      if (exists && exists.length > 0) {
-        break;
-      }
-
-      await supabase.from(articleTable).insert({
+      const pubDate = item.pubDate ?? item["dc:date"] ??
+        new Date().toISOString();
+      const newArticle = {
         site_id: site.id,
-        title,
+        title: item.title ?? "",
         url: link,
         category: site.category,
         content,
-        pub_date: pubDate,
+        pub_date: new Date(pubDate).toISOString(),
         thumbnail,
-      });
+      };
+
+      const { error: insertError } = await supabase.from(articleTable).insert(
+        newArticle,
+      );
+      if (insertError) {
+        console.error(
+          `  -> ❌ Failed to insert article: ${insertError.message}`,
+        );
+      } else {
+        console.log(`  -> ✅ Successfully inserted: ${newArticle.title}`);
+      }
     } catch (err) {
       console.error(
-        `[scrapeSite][item error] siteId=${site.id}\n  ↳ ${err}`,
+        `[scrapeSite][item error] siteId=${site.id} url=${item.link}\n  ↳ ${err.message}`,
       );
     }
   }
-  const end = performance.now();
   console.log(
-    `Process time site id=${site.id}  ${(end - start).toFixed(2)} ms`,
+    `  -> Process time: ${(performance.now() - start).toFixed(2)} ms`,
   );
-
-  const { count } = await supabase
-    .from<Article>(articleTable)
-    .select("id", { count: "exact", head: true });
-
-  if ((count ?? 0) > MAX_SAVE_ARTICLES) {
-    const { data: oldArticles } = await supabase
-      .from(articleTable)
-      .select("id")
-      .order("pub_date", { ascending: true })
-      .limit((count ?? 0) - MAX_SAVE_ARTICLES);
-
-    if (oldArticles && oldArticles.length > 0) {
-      const ids = oldArticles.map((a: any) => a.id);
-      await supabase.from(articleTable).delete().in("id", ids);
-    }
-  }
 }

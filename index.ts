@@ -1,8 +1,22 @@
 import { siteTable, supabase } from "./db.ts";
-import { scrapeSite, type Site } from "./site.ts";
+import { scrapeSite } from "./site.ts";
 
 async function runScraping() {
   try {
+    console.log("Fetching allowed embed hosts from DB...");
+    const { data: allowedHostsData, error: hostsError } = await supabase
+      .from("allowed_embed_hosts")
+      .select("hostname");
+
+    if (hostsError) {
+      console.error(`Failed to fetch allowed hosts: ${hostsError.message}`);
+      Deno.exit(1);
+    }
+    const allowedHostsSet: Set<string> = new Set(
+      allowedHostsData.map((h) => h.hostname),
+    );
+    console.log(`-> Fetched ${allowedHostsSet.size} allowed hosts.`);
+
     const { data: antenaSites, error } = await supabase.from(siteTable).select(
       "*",
     );
@@ -23,8 +37,8 @@ async function runScraping() {
 
       if (now.getTime() - lastAccess.getTime() >= duration) {
         try {
-          await scrapeSite(site);
-          await supabase.from<Site>(siteTable).update({
+          await scrapeSite(allowedHostsSet, site);
+          await supabase.from(siteTable).update({
             last_access: now.toISOString(),
           }).eq("id", site.id);
           console.log(`Successfully scraped and updated: site id = ${site.id}`);
