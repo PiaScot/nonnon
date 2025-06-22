@@ -11,7 +11,6 @@ function assertEnv(name: string): string {
 
 export const siteTable = assertEnv("SITE_TABLE");
 export const articleTable = assertEnv("ARTICLE_TABLE");
-export const projectID = assertEnv("PROJECT_ID");
 export const supabase = createClient(
   assertEnv("SUPABASE_URL"),
   assertEnv("SERVICE_ROLE_KEY"),
