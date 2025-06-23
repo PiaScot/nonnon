@@ -102,7 +102,10 @@ export async function scrapeSite(
       const $content = load(content);
       $content("img.my-formatted:not([src^='data:'])").each((_, img) => {
         const src = $content(img).attr("src");
-        if (src && site.domain && src.includes(site.domain)) {
+        if (
+          src && site.domain && src.includes(site.domain) &&
+          !src.includes("logo")
+        ) {
           thumbnail = src;
           return false;
         }
@@ -135,10 +138,12 @@ export async function scrapeSite(
       } else {
         console.log(`  -> ✅ Successfully inserted: ${newArticle.title}`);
       }
-    } catch (err) {
-      console.error(
-        `[scrapeSite][item error] siteId=${site.id} url=${item.link}\n  ↳ ${err.message}`,
-      );
+    } catch (err: unknown) {
+      if (err instanceof Error) {
+        console.error(
+          `[scrapeSite][item error] siteId=${site.id} url=${item.link}\n  ↳ ${err.message}`,
+        );
+      }
     }
   }
   console.log(

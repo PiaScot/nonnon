@@ -11,6 +11,7 @@ function assertEnv(name: string): string {
 
 export const siteTable = assertEnv("SITE_TABLE");
 export const articleTable = assertEnv("ARTICLE_TABLE");
+export const supabaseURL = assertEnv("SUPABASE_URL");
 export const generalRemoveTable = assertEnv("GENERAL_REMOVE_TAGS_TABLE");
 export const supabase = createClient(
   assertEnv("SUPABASE_URL"),
