@@ -40,18 +40,29 @@ function findValidMediaUrl($m: Cheerio<Element>): string {
 function absolutizePaths($: CheerioAPI, pageURL: string) {
   $("[src], [href]").each((_, el) => {
     const $el = $(el);
+
     for (const attrName of ["src", "href"]) {
       const originalPath = $el.attr(attrName);
-      if (!originalPath) return;
-      const trimmedPath = originalPath.trim();
       if (
-        /^https?:\/\//i.test(trimmedPath) || /^javascript:/i.test(trimmedPath)
-      ) return;
+        !originalPath || originalPath.startsWith("javascript:") ||
+        originalPath.startsWith("#")
+      ) {
+        continue;
+      }
+
+      const trimmedPath = originalPath.trim();
+
       try {
+        if (/^https?:\/\//i.test(trimmedPath)) {
+          continue;
+        }
         const absoluteUrl = new URL(trimmedPath, pageURL).href;
         $el.attr(attrName, absoluteUrl);
-      } catch (_e) {
-        console.warn(`Could not absolutize malformed path: "${trimmedPath}"`);
+      } catch (e) {
+        console.log(e);
+        console.warn(
+          `Could not absolutize malformed path: "${trimmedPath}" on page ${pageURL}`,
+        );
       }
     }
   });
@@ -321,7 +332,7 @@ export function processArticleHtml(
   removeVisuallyEmptyPTags($);
   deduplicateMedia($);
   collapseBr($, 4);
-
+  absolutizePaths($, pageURL);
   // 5. 最終的なHTMLを生成して返す
   const raw = removeDuplicateEmptyLine($.html().trim());
   return beautify.html(raw, { indent_size: 2 });
