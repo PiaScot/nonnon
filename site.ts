@@ -53,12 +53,13 @@ export async function scrapeSite(
 
   const xml = parse(await res.text());
   const chan = xml.rss?.channel ?? xml["rdf:RDF"]?.channel;
-  const rawItems = Array.isArray(chan?.item)
-    ? chan.item
-    : (chan?.item ? [chan.item] : []);
+  const rawItems = (() => {
+    const r = chan?.item ?? xml["rdf:RDF"]?.item ?? [];
+    return Array.isArray(r) ? r : [r];
+  })();
 
   if (rawItems.length === 0) {
-    console.warn("  -> No items found in RSS feed.");
+    console.warn("[WARN]  -> No items found in RSS feed.");
     return;
   }
 
@@ -72,14 +73,14 @@ export async function scrapeSite(
         .select("id").eq("url", link).maybeSingle();
       if (existingArticle) {
         console.log(
-          `  -> Article already exists. Stopping for this site. URL: ${link}`,
+          `[INFO]  -> Article already exists. Skipping for this site. URL: ${link}`,
         );
-        break;
+        continue;
       }
 
       const mobileHTML = await getHtmlText(link, "mobile");
       if (!mobileHTML) {
-        console.warn(`  -> ✘ Failed to fetch HTML for: ${link}`);
+        console.error(`[ERROR]  -> ✘ Failed to fetch HTML for: ${link}`);
         continue;
       }
 
@@ -95,7 +96,7 @@ export async function scrapeSite(
       );
 
       if (!content) {
-        console.warn(`  -> ✘ Failed to get content for: ${link}`);
+        console.error(`[ERROR]  -> ✘ Failed to get content for: ${link}`);
         continue;
       }
       let thumbnail = "";
@@ -133,10 +134,10 @@ export async function scrapeSite(
       );
       if (insertError) {
         console.error(
-          `  -> ❌ Failed to insert article: ${insertError.message}`,
+          `[ERROR]  -> ❌ Failed to insert article: ${insertError.message}`,
         );
       } else {
-        console.log(`  -> ✅ Successfully inserted: ${newArticle.title}`);
+        console.log(`[INFO]  -> ✅ Successfully inserted: ${newArticle.title}`);
       }
     } catch (err: unknown) {
       if (err instanceof Error) {
@@ -147,6 +148,6 @@ export async function scrapeSite(
     }
   }
   console.log(
-    `  -> Process time: ${(performance.now() - start).toFixed(2)} ms`,
+    `[INFO]  -> Process time: ${(performance.now() - start).toFixed(2)} ms`,
   );
 }
