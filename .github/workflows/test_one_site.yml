@@ -1,0 +1,47 @@
+# .github/workflows/test_one_site.yml
+name: Test Single Site on Push
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+jobs:
+  test-site:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Deno
+        uses: denoland/setup-deno@v2
+        with:
+          deno-version: v2.x
+
+      - name: Cache Deno dependencies
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/deno
+          key: ${{ runner.os }}-deno-${{ hashFiles('deno.lock', 'deno.json') }}
+          restore-keys: |
+            ${{ runner.os }}-deno-
+
+      - name: Generate / update lockfile for check.ts
+        run: deno cache --lock=deno.lock check.ts
+
+      - name: Run check script for a single site
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SERVICE_ROLE_KEY: ${{ secrets.SERVICE_ROLE_KEY }}
+          SITE_TABLE: ${{ secrets.SITE_TABLE }}
+          ARTICLE_TABLE: ${{ secrets.ARTICLE_TABLE }}
+          GENERAL_REMOVE_TAGS_TABLE: ${{ secrets.GENERAL_REMOVE_TAGS_TABLE }}
+        run: |
+          deno run \
+            --lock=deno.lock \
+            --allow-env \
+            --allow-net \
+            --allow-read \
+            --allow-write \
+            check.ts
