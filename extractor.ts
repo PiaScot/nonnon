@@ -7,22 +7,46 @@ const LAZY = ["data-src", "data-lazy-src", "data-original"];
 const MEDIA_RE = /\.(jpe?g|png|gif|webp|mp4|webm|mov|m4v)(\?.*)?$/i;
 const VIDEO_RE = /\.(mp4|webm|mov|m4v)(\?.*)?$/i;
 
+/**
+ * URLがhttp://の場合、プロキシ経由のURLに変換する。httpsの場合はそのまま返す。
+ * @param originalUrl - 元のURL
+ * @returns 変換後のURL
+ */
+function getProxiedUrl(originalUrl: string): string {
+  if (originalUrl?.startsWith("http://")) {
+    return `/api/image-proxy?url=${encodeURIComponent(originalUrl)}`;
+  }
+  return originalUrl;
+}
+
 export async function getHtmlText(
   url: string,
   layout: "pc" | "mobile",
 ): Promise<string> {
-  const origin = new URL(url).origin;
-  const resp = await fetch(url, {
-    headers: {
-      "User-Agent": layout === "pc" ? randomPCUA() : randomMobileUA(),
-      Accept: "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-      "Accept-Language": "ja-JP,ja;q=0.9",
-      "Referer": origin,
-    },
-  });
-  if (!resp.ok) throw new Error(`fetch error ${resp.status} for ${url}`);
-  const text = await resp.text();
-  return removeDuplicateEmptyLine(text);
+  try {
+    const origin = new URL(url).origin;
+    const resp = await fetch(url, {
+      headers: {
+        "User-Agent": layout === "pc" ? randomPCUA() : randomMobileUA(),
+        Accept:
+          "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+        "Accept-Language": "ja-JP,ja;q=0.9",
+        "Referer": origin,
+      },
+    });
+
+    if (!resp.ok) {
+      throw new Error(`HTTP ${resp.status} ${resp.statusText} for ${url}`);
+    }
+
+    const text = await resp.text();
+    return removeDuplicateEmptyLine(text);
+  } catch (error) {
+    if (error instanceof TypeError) {
+      throw new Error(`Network error fetching ${url}: ${error.message}`);
+    }
+    throw error;
+  }
 }
 
 function removeDuplicateEmptyLine(text: string): string {
@@ -187,18 +211,22 @@ function unwrapAnchoredMedia($: CheerioAPI) {
         if (url) return false;
       });
     }
+
+    const proxiedUrl = getProxiedUrl(url);
     if (!MEDIA_RE.test(url)) return;
-    const replacementTag = VIDEO_RE.test(url)
-      ? `<video src="${url}" class="my-formatted" referrerpolicy="no-referrer" controls playsinline style="width:100%;height:auto;display:block;"></video>`
-      : `<img src="${url}" class="my-formatted" referrerpolicy="no-referrer" style="width:100%;height:auto;display:block;" loading="lazy" />`;
+    const replacementTag = VIDEO_RE.test(proxiedUrl)
+      ? `<video src="${proxiedUrl}" class="my-formatted" referrerpolicy="no-referrer" controls playsinline style="width:100%;height:auto;display:block;"></video>`
+      : `<img src="${proxiedUrl}" class="my-formatted" referrerpolicy="no-referrer" style="width:100%;height:auto;display:block;" loading="lazy" />`;
     $el.replaceWith(replacementTag);
   });
+
   $("video:has(source)").each((_, videoEl) => {
     const $video = $(videoEl as Element);
     if ($video.attr("src")) return;
     const sourceSrc = $video.find("source[src]").first().attr("src")?.trim();
     if (sourceSrc) {
-      $video.attr("src", sourceSrc).addClass("my-formatted").attr(
+      const proxiedUrl = getProxiedUrl(sourceSrc);
+      $video.attr("src", proxiedUrl).addClass("my-formatted").attr(
         "controls",
         "",
       ).attr("playsinline", "").css({
@@ -234,8 +262,10 @@ function normalizeImages($: CheerioAPI) {
       $img.remove();
       return;
     }
+
+    const proxiedSrc = getProxiedUrl(src);
     const $new = $("<img>").attr({
-      src,
+      src: proxiedSrc,
       loading: "lazy",
       referrerpolicy: "no-referrer",
       style: "max-width:100%;height:auto;display:block",
@@ -312,15 +342,15 @@ export function processArticleHtml(
 ): string {
   const $ = load(html);
 
-  // 1. パスとインポートを絶対化
-  absolutizePaths($, pageURL);
-  absolutizeCssImports($, pageURL);
-
-  // 2. 不要なスクリプトとセレクタを削除
+  // 1. 削除処理を先に実行（処理対象を減らすため）
   removeScript($, allowHosts);
   removeSelector($, removeSelectors);
 
-  // 3. 各種埋め込みコンテンツとメディアを正規化・整形
+  // 2. パスとインポートを絶対化（1回のみ）
+  absolutizePaths($, pageURL);
+  absolutizeCssImports($, pageURL);
+
+  // 3. メディア処理
   convertImgurEmbeds($);
   convertRedditEmbeds($);
   unwrapAnchoredMedia($);
@@ -332,8 +362,8 @@ export function processArticleHtml(
   removeVisuallyEmptyPTags($);
   deduplicateMedia($);
   collapseBr($, 4);
-  absolutizePaths($, pageURL);
-  // 5. 最終的なHTMLを生成して返す
+
+  // 5. 最終HTML生成
   const raw = removeDuplicateEmptyLine($.html().trim());
   return beautify.html(raw, { indent_size: 2 });
 }
