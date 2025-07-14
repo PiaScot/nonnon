@@ -6,29 +6,6 @@ import type { Site } from "./types.ts";
 import { randomMobileUA } from "./utils.ts";
 import { getHtmlText, processArticleHtml } from "./extractor.ts";
 
-const MAX_SAVE_ARTICLES = 200000;
-
-async function cleanupOldArticles() {
-  const { count, error: countError } = await supabase.from(articleTable).select(
-    "id",
-    { count: "exact", head: true },
-  );
-  if (countError) {
-    console.error(`Failed to count articles: ${countError.message}`);
-    return;
-  }
-  if (count && count > MAX_SAVE_ARTICLES) {
-    const limit = count - MAX_SAVE_ARTICLES;
-    console.log(`Limit exceeded. Deleting oldest ${limit} articles...`);
-    const { data: oldArticles, error: selectError } = await supabase.from(
-      articleTable,
-    ).select("id").order("pub_date", { ascending: true }).limit(limit);
-    if (selectError || !oldArticles || oldArticles.length === 0) return;
-    const idsToDelete = oldArticles.map((a: any) => a.id);
-    await supabase.from(articleTable).delete().in("id", idsToDelete);
-  }
-}
-
 export async function scrapeSite(
   site: Site,
   generalRemoveTags: string[],

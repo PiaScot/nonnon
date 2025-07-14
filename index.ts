@@ -1,4 +1,4 @@
-import { supabase } from "./db.ts";
+import { supabase, maintainArticleLimit } from "./db.ts";
 import { scrapeSite } from "./site.ts";
 import type { Site } from "./types.ts";
 
@@ -54,6 +54,9 @@ async function runScraping() {
     const results = await Promise.allSettled(scrapePromises);
 
     logResults(results);
+
+    // スクレイピング完了後に記事数の上限をチェック・維持する
+    await maintainArticleLimit();
   } catch (e) {
     console.error("❌ Fatal error at runScraping:", e.message);
     Deno.exit(1);
