@@ -41,7 +41,7 @@ jobs:
             ${{ runner.os }}-pnpm-store-
 
       - name: Install dependencies
-        run: pnpm install --frozen-lockfile
+        run: pnpm install --no-frozen-lockfile
 
       - name: Run scraper
         env:
@@ -60,13 +60,3 @@ jobs:
           SCRAPE_CONCURRENCY: ${{ secrets.SCRAPE_CONCURRENCY || 5 }}
           NODE_ENV: production
         run: pnpm start
-
-      - name: Upload logs on failure
-        if: failure()
-        uses: actions/upload-artifact@v4
-        with:
-          name: scraper-logs-${{ github.run_number }}
-          path: |
-            *.log
-            logs/
-          retention-days: 7
