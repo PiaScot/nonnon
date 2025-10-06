@@ -10,6 +10,7 @@ import { z } from 'zod';
 export const ScrapeOptionsSchema = z.object({
   remove_selector_tags: z.array(z.string()),
   display_mode: z.enum(['in_app', 'direct_link']),
+  fetch_strategy: z.enum(['crawlee', 'fetch']).default('crawlee'),
 });
 
 export type ScrapeOptions = z.infer<typeof ScrapeOptionsSchema>;

@@ -1,19 +1,18 @@
 /**
- * Smart HTTP client with 3-stage fallback strategy
+ * Smart HTTP client with 2-stage fallback strategy
  *
  * Strategy:
  * 1. Try crawlee (got-scraping) - Best for Cloudflare/Bot protection
- * 2. Try Playwright (headless browser) - Heavy but works for all sites
- * 3. Fall back to legacy fetch - Lightweight but may be blocked
+ * 2. Fall back to legacy fetch - Lightweight but may be blocked
+ *
+ * Note: Playwright removed - Flutter InAppWebView handles dynamic content
  */
 
 import { gotScraping } from 'crawlee';
 import { fetchHtml as legacyFetchHtml } from './http-client.js';
-import { PlaywrightService } from '../services/playwright-service.js';
 import { logDebug, logWarn, logError, logInfo } from './logger.js';
-import { appConfig } from './config.js';
 
-export type FetchStrategy = 'crawlee' | 'playwright' | 'fetch';
+export type FetchStrategy = 'crawlee' | 'fetch';
 export type UserAgentType = 'mobile' | 'pc';
 
 interface SmartFetchOptions {
@@ -70,53 +69,6 @@ async function fetchWithCrawlee(
 }
 
 /**
- * Fetch HTML with Playwright (headless browser)
- * Heavy but works for JavaScript-heavy sites and dynamic content
- */
-async function fetchWithPlaywright(
-  url: string,
-  userAgent: UserAgentType = 'mobile',
-  timeout: number = 30000
-): Promise<string | null> {
-  const playwrightService = new PlaywrightService();
-
-  try {
-    logDebug(`Fetching with Playwright: ${url}`);
-
-    await playwrightService.start();
-
-    const userAgentString =
-      userAgent === 'mobile'
-        ? appConfig.mobileUserAgents[0]
-        : appConfig.pcUserAgents[0];
-
-    const page = await playwrightService.browser!.newPage({
-      userAgent: userAgentString,
-      viewport:
-        userAgent === 'mobile'
-          ? { width: 375, height: 812 }
-          : { width: 1920, height: 1080 },
-    });
-
-    await page.goto(url, {
-      waitUntil: 'networkidle',
-      timeout,
-    });
-
-    const html = await page.content();
-    await page.close();
-
-    logInfo(`Playwright fetch success: ${url} (${html.length} bytes)`);
-    return html;
-  } catch (error) {
-    logWarn(`Playwright fetch failed for ${url}`, error);
-    return null;
-  } finally {
-    await playwrightService.stop();
-  }
-}
-
-/**
  * Fetch HTML with legacy fetch method
  * Lightweight but may be blocked by bot protection
  */
@@ -164,10 +116,6 @@ export async function smartFetchHtml(
     return fetchWithLegacyFetch(url, userAgent);
   }
 
-  if (strategy === 'playwright') {
-    return fetchWithPlaywright(url, userAgent, timeout);
-  }
-
   // Default: crawlee with fallback
   let html: string | null = null;
   let attempt = 0;
@@ -190,16 +138,8 @@ export async function smartFetchHtml(
     }
   }
 
-  // Stage 2: Try Playwright if crawlee failed
-  logWarn(`crawlee failed after ${maxRetries} attempts, trying Playwright...`);
-  html = await fetchWithPlaywright(url, userAgent, timeout);
-
-  if (html) {
-    return html;
-  }
-
-  // Stage 3: Try legacy fetch as last resort
-  logWarn('Playwright failed, trying legacy fetch as last resort...');
+  // Stage 2: Try legacy fetch as fallback
+  logWarn(`crawlee failed after ${maxRetries} attempts, trying legacy fetch...`);
   html = await fetchWithLegacyFetch(url, userAgent);
 
   if (!html) {
@@ -226,8 +166,6 @@ export async function fetchHtmlWithStrategy(
   switch (strategy) {
     case 'crawlee':
       return fetchWithCrawlee(url, userAgent, timeout);
-    case 'playwright':
-      return fetchWithPlaywright(url, userAgent, timeout);
     case 'fetch':
       return fetchWithLegacyFetch(url, userAgent);
     default:

@@ -40,9 +40,6 @@
     "js-beautify": "^1.15.4",
     "pino": "^8.17.2",
     "pino-pretty": "^10.3.1",
-    "playwright": "^1.40.1",
-    "playwright-extra": "^4.3.6",
-    "puppeteer-extra-plugin-stealth": "^2.11.2",
     "rss-parser": "^3.13.0",
     "sanitize-html": "^2.11.0",
     "zod": "^3.22.4"
@@ -61,6 +58,6 @@
   },
   "engines": {
     "node": ">=20.0.0",
-    "pnpm": ">=8.0.0"
+    "pnpm": ">=10.0.0"
   }
 }
