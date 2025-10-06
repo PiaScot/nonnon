@@ -1,0 +1,16 @@
+node_modules/
+coverage/
+dist/
+
+.env
+*.log
+__tests__
+
+.claude
+CLAUDE.md
+instructions/
+docs/
+migrations/
+
+diagnostics/
+
