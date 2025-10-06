@@ -26,7 +26,7 @@ export const SiteSchema = z.object({
   rss: z.string().url(),
   category: z.string().nullable().optional(),
   last_access: z.string(),
-  duration_access: z.number().nullable(),
+  scrape_interval_seconds: z.number().nullable(),
   scrape_options: ScrapeOptionsSchema.nullable(),
 });
 
