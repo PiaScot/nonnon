@@ -20,6 +20,7 @@
     "diag:fetch": "tsx src/diagnostics/test_fetch_strategies.ts",
     "diag:all": "tsx src/diagnostics/test_all_sites.ts",
     "diag:save-html": "tsx src/diagnostics/save_html.ts",
+    "diag:site-11": "tsx src/diagnostics/test_site_11.ts",
     "db:update": "tsx src/diagnostics/update_database.ts",
     "db:reprocess": "tsx src/diagnostics/update_database.ts",
     "db:test-reprocess": "tsx src/diagnostics/test_reprocess.ts"

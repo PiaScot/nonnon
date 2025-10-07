@@ -11,10 +11,18 @@ import { logInfo, logWarn, logError } from '../utils/logger.js';
 import * as cheerio from 'cheerio';
 
 const rssParser = new Parser({
-  timeout: 20000,
+  timeout: 30000,
   headers: {
-    'User-Agent': 'Mozilla/5.0 (iPhone; CPU iPhone OS 17_4 like Mac OS X) AppleWebKit/605.1.15',
-    Accept: 'application/rss+xml,application/xml',
+    'User-Agent': 'Mozilla/5.0 (iPhone; CPU iPhone OS 17_4 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.4 Mobile/15E148 Safari/604.1',
+    Accept: 'application/rss+xml,application/xml,application/atom+xml,text/xml,*/*',
+    'Accept-Language': 'ja-JP,ja;q=0.9,en-US;q=0.8,en;q=0.7',
+    'Cache-Control': 'no-cache',
+  },
+  customFields: {
+    item: [
+      ['media:thumbnail', 'media:thumbnail'],
+      ['media:content', 'media:content'],
+    ],
   },
 });
 
@@ -97,11 +105,27 @@ export async function scrapeSite(
  */
 export async function fetchRssFeed(rssUrl: string): Promise<Parser.Output<unknown> | null> {
   try {
+    // Try direct parsing first
     const feed = await rssParser.parseURL(rssUrl);
     return feed;
   } catch (error) {
-    logError(`Failed to fetch RSS: ${rssUrl}`, error);
-    return null;
+    logWarn(`Direct RSS fetch failed for ${rssUrl}, trying with crawlee...`, error);
+
+    // Fallback: Use crawlee to fetch RSS XML
+    try {
+      const xml = await smartFetchHtml(rssUrl, { strategy: 'crawlee', timeout: 30000 });
+      if (!xml) {
+        logError(`Failed to fetch RSS XML via crawlee: ${rssUrl}`);
+        return null;
+      }
+
+      const feed = await rssParser.parseString(xml);
+      logInfo(`Successfully fetched RSS via crawlee: ${rssUrl}`);
+      return feed;
+    } catch (fallbackError) {
+      logError(`Failed to fetch RSS (all methods): ${rssUrl}`, fallbackError);
+      return null;
+    }
   }
 }
 
@@ -162,19 +186,31 @@ export async function processSingleArticle(
 
 /**
  * Find thumbnail from article content
+ * Priority: Same domain + no "logo" + https > Same domain + no "logo" + http > First image
  */
 export function findThumbnail($: cheerio.CheerioAPI, pageUrl: string, domain: string): string {
   // Find images from the same domain, excluding logos
   const images = $('img.my-formatted:not([src^="data:"])').toArray();
+  const candidates: string[] = [];
 
   for (const img of images) {
     const src = $(img).attr('src');
     if (src) {
       const absoluteSrc = new URL(src, pageUrl).href;
       if (absoluteSrc.includes(domain) && !absoluteSrc.toLowerCase().includes('logo')) {
-        return absoluteSrc;
+        candidates.push(absoluteSrc);
       }
     }
+  }
+
+  // Prioritize https URLs
+  if (candidates.length > 0) {
+    const httpsCandidate = candidates.find((url) => url.startsWith('https://'));
+    if (httpsCandidate) {
+      return httpsCandidate;
+    }
+    // Fallback to first candidate (http or other)
+    return candidates[0];
   }
 
   // Fallback to first image
