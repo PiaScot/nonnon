@@ -188,39 +188,71 @@ export async function processSingleArticle(
  * Find thumbnail from article content
  * Priority: Same domain + no "logo" + https > Same domain + no "logo" + http > First image
  */
-export function findThumbnail($: cheerio.CheerioAPI, pageUrl: string, domain: string): string {
-  // Find images from the same domain, excluding logos
-  const images = $('img.my-formatted:not([src^="data:"])').toArray();
+// export function findThumbnail($: cheerio.CheerioAPI, pageUrl: string, domain: string): string {
+//   // Find images from the same domain, excluding logos
+//   const images = $('img.my-formatted:not([src^="data:"])').toArray();
+//   const candidates: string[] = [];
+//
+//   for (const img of images) {
+//     const src = $(img).attr('src');
+//     if (src) {
+//       const absoluteSrc = new URL(src, pageUrl).href;
+//       if (absoluteSrc.includes(domain) && !absoluteSrc.toLowerCase().includes('logo')) {
+//         candidates.push(absoluteSrc);
+//       }
+//     }
+//   }
+//
+//   // Prioritize https URLs
+//   if (candidates.length > 0) {
+//     const httpsCandidate = candidates.find((url) => url.startsWith('https://'));
+//     if (httpsCandidate) {
+//       return httpsCandidate;
+//     }
+//     // Fallback to first candidate (http or other)
+//     return candidates[0];
+//   }
+//
+//   // Fallback to first image
+//   const firstImg = $('img.my-formatted:not([src^="data:"])').first();
+//   const src = firstImg.attr('src');
+//   if (src) {
+//     return new URL(src, pageUrl).href;
+//   }
+//
+//   return '';
+// }
+
+function findThumbnail($: cheerio.CheerioAPI, pageUrl: string, domain: string): string {
+  const images = $('img').toArray();
   const candidates: string[] = [];
 
   for (const img of images) {
     const src = $(img).attr('src');
-    if (src) {
+    if (!src) continue;
+
+    // Filter out logos, icons, and other non-content images
+    const lowerSrc = src.toLowerCase();
+    if (
+      lowerSrc.includes('logo') ||
+      lowerSrc.includes('icon') ||
+      lowerSrc.includes('video.twimg.com/amplify_video') ||
+      lowerSrc.startsWith('data:')
+    ) {
+      continue;
+    }
+
+    try {
+      // Resolve to absolute URL and add to candidates
       const absoluteSrc = new URL(src, pageUrl).href;
-      if (absoluteSrc.includes(domain) && !absoluteSrc.toLowerCase().includes('logo')) {
-        candidates.push(absoluteSrc);
-      }
+      candidates.push(absoluteSrc);
+    } catch (e) {
+      console.warn(`[WARN] Invalid image src found: "${src}" on page ${pageUrl}`);
     }
   }
 
-  // Prioritize https URLs
-  if (candidates.length > 0) {
-    const httpsCandidate = candidates.find((url) => url.startsWith('https://'));
-    if (httpsCandidate) {
-      return httpsCandidate;
-    }
-    // Fallback to first candidate (http or other)
-    return candidates[0];
-  }
-
-  // Fallback to first image
-  const firstImg = $('img.my-formatted:not([src^="data:"])').first();
-  const src = firstImg.attr('src');
-  if (src) {
-    return new URL(src, pageUrl).href;
-  }
-
-  return '';
+  // Return the first valid candidate, or an empty string if none found.
+  return candidates.length > 0 ? candidates[0] : '';
 }
 
 /**

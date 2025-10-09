@@ -1,3 +1,7 @@
+.envrc
+.envrc.local
+readme.md
+
 node_modules/
 coverage/
 dist/
@@ -14,3 +18,5 @@ migrations/
 
 diagnostics/
 
+
+articles-api/
