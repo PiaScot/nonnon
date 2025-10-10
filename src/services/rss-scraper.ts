@@ -251,8 +251,15 @@ function findThumbnail($: cheerio.CheerioAPI, pageUrl: string, domain: string): 
     }
   }
 
-  // Return the first valid candidate, or an empty string if none found.
-  return candidates.length > 0 ? candidates[0] : '';
+  if (candidates.length == 0) {
+    return ''
+  } else if (candidates.length == 1) {
+    return candidates[0]
+  } else if (candidates.length == 2) {
+    return candidates[1]
+  } else if (candidates.length > 2) {
+    candidates[2]
+  }
 }
 
 /**

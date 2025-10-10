@@ -28,6 +28,17 @@ const ConfigSchema = z.object({
   // RPC functions
   getSitesToScrapeRpc: z.string(),
 
+
+  // Couldflare
+
+  cloudflareAccountId: z.string(),
+  d1DatabaseId: z.string(),
+  cloudflareApiToken: z.string(),
+
+  r2AccountId: z.string(),
+  r2AccessKeyId: z.string(),
+  r2SecretAccessKey: z.string(),
+
   // Application settings
   maxArticles: z.number().int().positive(),
   batchSize: z.number().int().positive(),
@@ -79,6 +90,15 @@ function loadConfig(): AppConfig {
     allowHostTable: process.env.ALLOW_HOST_TABLE,
     generalRemoveTagsTable: process.env.GENERAL_REMOVE_TAGS_TABLE,
     getSitesToScrapeRpc: process.env.GET_SITES_TO_SCRAPE_RPC,
+
+
+    cloudflareAccountId: process.env.CLOUDFLARE_ACCOUNT_ID,
+    d1DatabaseId: process.env.D1_DATABASE_ID,
+    cloudflareApiToken: process.env.CLOUDFLARE_API_TOKEN,
+
+    r2AccountId: process.env.R2_ACCOUNT_ID,
+    r2AccessKeyId: process.env.R2_ACCESS_KEY_ID,
+    r2SecretAccessKey: process.env.R2_SECRET_ACCESS_KEY,
     maxArticles: process.env.MAX_ARTICLES ? parseInt(process.env.MAX_ARTICLES, 10) : undefined,
     batchSize: process.env.BATCH_SIZE ? parseInt(process.env.BATCH_SIZE, 10) : undefined,
     scrapeConcurrency: process.env.SCRAPE_CONCURRENCY

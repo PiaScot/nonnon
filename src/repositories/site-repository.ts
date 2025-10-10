@@ -136,3 +136,80 @@ export class SiteRepository extends BaseRepository {
     }
   }
 }
+
+/**
+ * D1-specific repository for Site data
+ */
+export class D1SiteRepository {
+  private readonly accountId: string;
+  private readonly databaseId: string;
+  private readonly apiToken: string;
+  private readonly apiUrl: string;
+
+  constructor() {
+    const { cloudflareAccountId, d1DatabaseId, cloudflareApiToken } = appConfig;
+
+    if (!cloudflareAccountId || !d1DatabaseId || !cloudflareApiToken) {
+      throw new Error(
+        'Cloudflare D1 credentials are not configured. Please set CLOUDFLARE_ACCOUNT_ID, D1_DATABASE_ID, and CLOUDFLARE_API_TOKEN.'
+      );
+    }
+
+    this.accountId = cloudflareAccountId;
+    this.databaseId = d1DatabaseId;
+    this.apiToken = cloudflareApiToken;
+    this.apiUrl = `https://api.cloudflare.com/client/v4/accounts/${this.accountId}/d1/database/${this.databaseId}/query`;
+  }
+
+  /**
+   * Executes a query against the D1 HTTP API.
+   * @param sql The SQL query string.
+   * @param params Optional query parameters.
+   * @returns The raw results from the D1 API.
+   */
+  private async _query<T>(sql: string, params: any[] = []): Promise<T[]> {
+    try {
+      const response = await fetch(this.apiUrl, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${this.apiToken}`,
+        },
+        body: JSON.stringify({ sql, params }),
+      });
+
+      if (!response.ok) {
+        const errorText = await response.text();
+        throw new Error(`D1 API request failed with status ${response.status}: ${errorText}`);
+      }
+
+      const data = (await response.json()) as { result?: { results?: T[] }[] };
+      return data.result?.[0]?.results ?? [];
+    } catch (error) {
+      logError('Failed to execute D1 query', error);
+      throw error;
+    }
+  }
+
+  /**
+   * Fetches sites that are due for scraping.
+   * This is the D1 equivalent of the get_sites_to_scrape() PostgreSQL function.
+   */
+  async getSitesToScrape(): Promise<Site[]> {
+    // This query assumes the `last_access` column has been cleaned to 'YYYY-MM-DDTHH:MM:SSZ' format.
+    const sql = `
+      SELECT *
+      FROM sites
+      WHERE (strftime('%s', 'now') - strftime('%s', last_access)) >= scrape_interval_seconds;
+    `;
+
+    try {
+      const results = await this._query<any>(sql);
+      // Use Zod to parse and validate the data, ensuring type safety
+      return z.array(SiteSchema).parse(results);
+    } catch (error) {
+      logError('D1: Failed to get sites to scrape', error);
+      return [];
+    }
+  }
+}
