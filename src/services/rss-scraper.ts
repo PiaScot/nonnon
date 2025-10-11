@@ -4,10 +4,13 @@
 
 import Parser from 'rss-parser';
 import { Site, Article } from '../models/schemas.js';
+// import { ArticleRepository, D1ArticleRepository } from '../repositories/article-repository.js';
 import { ArticleRepository } from '../repositories/article-repository.js';
+// import { R2Repository } from '../repositories/r2-repository.js';
+// import { Semaphore } from '../utils/concurrency.js';
 import { smartFetchHtml } from '../utils/smart-http-client.js';
 import { processArticleHtml } from './html-processor.js';
-import { logInfo, logWarn, logError } from '../utils/logger.js';
+import { logInfo, logWarn, logError, logSuccess } from '../utils/logger.js';
 import * as cheerio from 'cheerio';
 
 const rssParser = new Parser({
@@ -33,7 +36,7 @@ export async function scrapeSite(
   site: Site,
   generalRemoveTags: string[],
   allowedHosts: Set<string>,
-  articleRepo: ArticleRepository
+  articleRepo: ArticleRepository // This is the Supabase repository
 ): Promise<{ insertedCount: number; totalArticles: number }> {
   if (!site.rss || !site.domain) {
     logWarn(`[SKIP] RSS or Domain not registered for siteId=${site.id}`);
@@ -45,7 +48,6 @@ export async function scrapeSite(
     return { insertedCount: 0, totalArticles: 0 };
   }
 
-  // Extract all URLs from feed
   const feedUrls = feed.items
     .map((item) => item.link?.split('?')[0].trim())
     .filter((url): url is string => !!url);
@@ -55,49 +57,72 @@ export async function scrapeSite(
     return { insertedCount: 0, totalArticles: 0 };
   }
 
-  // Batch check existing URLs
   const existingUrls = await articleRepo.checkExistingUrls(feedUrls);
   logInfo(`Found ${existingUrls.size} existing articles out of ${feedUrls.length} in feed`);
 
-  const articlesToInsert: Partial<Article>[] = [];
-
+  const articlesToProcess: Partial<Article>[] = [];
   for (const item of feed.items) {
     const link = item.link?.split('?')[0].trim();
-    if (!link) continue;
-
-    // Skip if already exists (from batch check)
-    if (existingUrls.has(link)) {
-      logInfo(`Article already exists, skipping. URL: ${link}`);
+    if (!link || existingUrls.has(link)) {
+      if (link) logInfo(`Article already exists, skipping. URL: ${link}`);
       continue;
     }
 
-    const article = await processSingleArticle(
-      item,
-      link,
-      site,
-      generalRemoveTags,
-      allowedHosts
-    );
-
+    const article = await processSingleArticle(item, link, site, generalRemoveTags, allowedHosts);
     if (article) {
-      articlesToInsert.push({
-        site_id: article.site_id,
-        title: article.title,
-        url: article.url,
-        content: article.content,
-        pub_date: article.pub_date,
-        thumbnail: article.thumbnail,
-      });
+      articlesToProcess.push(article);
     }
   }
 
-  if (articlesToInsert.length === 0) {
+  if (articlesToProcess.length === 0) {
     logInfo(`No new articles to insert for site: ${site.title}`);
     return { insertedCount: 0, totalArticles: feed.items.length };
   }
 
-  const count = await articleRepo.insertMany(articlesToInsert);
-  return { insertedCount: count, totalArticles: feed.items.length };
+  // --- Step 1: Insert into Supabase to get IDs ---
+  logInfo(`Inserting ${articlesToProcess.length} articles into Supabase...`);
+  const newSupabaseArticles = await articleRepo.insertMany(articlesToProcess);
+  logSuccess(`Successfully inserted ${newSupabaseArticles.length} articles into Supabase.`);
+
+  if (newSupabaseArticles.length === 0) {
+    return { insertedCount: 0, totalArticles: feed.items.length };
+  }
+
+  // --- Step 2: Use the new IDs to insert into D1 and R2 ---
+  // const d1ArticleRepo = new D1ArticleRepository();
+  // const r2Repo = new R2Repository();
+  // const semaphore = new Semaphore(10); // Concurrency for R2 uploads
+  //
+  // logInfo(`Uploading ${newSupabaseArticles.length} article contents to R2 and metadata to D1...`);
+  //
+  // const r2UploadPromises = newSupabaseArticles.map((article) =>
+  //   semaphore.execute(async () => {
+  //     if (article.id && article.content) {
+  //       await r2Repo.upload(`${article.id}.html`, article.content, 'text/html; charset=utf-8');
+  //     }
+  //   })
+  // );
+  //
+  // // D1 insert doesn't need concurrency as we do a single batch insert
+  // const d1InsertPromise = d1ArticleRepo.insertMany(newSupabaseArticles);
+  //
+  // // Wait for all operations to complete
+  // const [d1Result, ...r2Results] = await Promise.allSettled([d1InsertPromise, ...r2UploadPromises]);
+  //
+  // if (d1Result.status === 'fulfilled') {
+  //   logSuccess(`Successfully inserted ${d1Result.value} articles into D1.`);
+  // } else {
+  //   logError('Failed to insert articles into D1', d1Result.reason);
+  // }
+  //
+  // const r2SuccessCount = r2Results.filter(r => r.status === 'fulfilled').length;
+  // logSuccess(`Successfully uploaded ${r2SuccessCount} contents to R2.`);
+  // const r2FailedCount = r2Results.length - r2SuccessCount;
+  // if (r2FailedCount > 0) {
+  //   logError(`${r2FailedCount} content uploads to R2 failed.`);
+  // }
+
+  return { insertedCount: newSupabaseArticles.length, totalArticles: feed.items.length };
 }
 
 /**
@@ -169,7 +194,7 @@ export async function processSingleArticle(
   }
 
   const $ = cheerio.load(content);
-  const thumbnail = findThumbnail($, link, site.domain || '');
+  const thumbnail = findThumbnail($, link);
   const pubDate = getPublicationDate(item);
   const title = item.title || `No Title Found for ${link}`;
 
@@ -177,7 +202,6 @@ export async function processSingleArticle(
     site_id: site.id,
     title,
     url: link,
-    category: site.category,
     content,
     pub_date: pubDate,
     thumbnail,
@@ -223,7 +247,7 @@ export async function processSingleArticle(
 //   return '';
 // }
 
-function findThumbnail($: cheerio.CheerioAPI, pageUrl: string, domain: string): string {
+function findThumbnail($: cheerio.CheerioAPI, pageUrl: string): string {
   const images = $('img').toArray();
   const candidates: string[] = [];
 
@@ -251,15 +275,16 @@ function findThumbnail($: cheerio.CheerioAPI, pageUrl: string, domain: string): 
     }
   }
 
-  if (candidates.length == 0) {
-    return ''
-  } else if (candidates.length == 1) {
-    return candidates[0]
-  } else if (candidates.length == 2) {
-    return candidates[1]
-  } else if (candidates.length > 2) {
-    candidates[2]
+  if (candidates.length === 0) {
+    return '';
   }
+
+  // A simple heuristic: prefer images that appear later in the document,
+  // but not the very last one, as it might be a tracking pixel.
+  if (candidates.length > 2) {
+    return candidates[candidates.length - 2];
+  }
+  return candidates[candidates.length - 1];
 }
 
 /**

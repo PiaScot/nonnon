@@ -31,13 +31,13 @@ const ConfigSchema = z.object({
 
   // Couldflare
 
-  cloudflareAccountId: z.string(),
-  d1DatabaseId: z.string(),
-  cloudflareApiToken: z.string(),
-
-  r2AccountId: z.string(),
-  r2AccessKeyId: z.string(),
-  r2SecretAccessKey: z.string(),
+  // cloudflareAccountId: z.string(),
+  // d1DatabaseId: z.string(),
+  // cloudflareApiToken: z.string(),
+  //
+  // r2AccountId: z.string(),
+  // r2AccessKeyId: z.string(),
+  // r2SecretAccessKey: z.string(),
 
   // Application settings
   maxArticles: z.number().int().positive(),
