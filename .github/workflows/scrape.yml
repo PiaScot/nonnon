@@ -55,6 +55,8 @@ jobs:
           ALLOW_HOST_TABLE: ${{ secrets.ALLOW_HOST_TABLE }}
           GENERAL_REMOVE_TAGS_TABLE: ${{ secrets.GENERAL_REMOVE_TAGS_TABLE }}
           GET_SITES_TO_SCRAPE_RPC: ${{ secrets.GET_SITES_TO_SCRAPE_RPC }}
+          ARTICLES_API_SECRET: ${{ secrets.ARTICLES_API_SECRET }}
+          ARTICLES_API_URL: ${{ secrets.ARTICLES_API_URL }}
           MAX_ARTICLES: ${{ secrets.MAX_ARTICLES }}
           BATCH_SIZE: ${{ secrets.BATCH_SIZE }}
           SCRAPE_CONCURRENCY: ${{ secrets.SCRAPE_CONCURRENCY || 5 }}

@@ -4,10 +4,8 @@
 
 import Parser from 'rss-parser';
 import { Site, Article } from '../models/schemas.js';
-// import { ArticleRepository, D1ArticleRepository } from '../repositories/article-repository.js';
 import { ArticleRepository } from '../repositories/article-repository.js';
-// import { R2Repository } from '../repositories/r2-repository.js';
-// import { Semaphore } from '../utils/concurrency.js';
+import { ArticlesApiClient } from '../repositories/articles-api-client.js';
 import { smartFetchHtml } from '../utils/smart-http-client.js';
 import { processArticleHtml } from './html-processor.js';
 import { logInfo, logWarn, logError, logSuccess } from '../utils/logger.js';
@@ -88,39 +86,32 @@ export async function scrapeSite(
     return { insertedCount: 0, totalArticles: feed.items.length };
   }
 
-  // --- Step 2: Use the new IDs to insert into D1 and R2 ---
-  // const d1ArticleRepo = new D1ArticleRepository();
-  // const r2Repo = new R2Repository();
-  // const semaphore = new Semaphore(10); // Concurrency for R2 uploads
-  //
-  // logInfo(`Uploading ${newSupabaseArticles.length} article contents to R2 and metadata to D1...`);
-  //
-  // const r2UploadPromises = newSupabaseArticles.map((article) =>
-  //   semaphore.execute(async () => {
-  //     if (article.id && article.content) {
-  //       await r2Repo.upload(`${article.id}.html`, article.content, 'text/html; charset=utf-8');
-  //     }
-  //   })
-  // );
-  //
-  // // D1 insert doesn't need concurrency as we do a single batch insert
-  // const d1InsertPromise = d1ArticleRepo.insertMany(newSupabaseArticles);
-  //
-  // // Wait for all operations to complete
-  // const [d1Result, ...r2Results] = await Promise.allSettled([d1InsertPromise, ...r2UploadPromises]);
-  //
-  // if (d1Result.status === 'fulfilled') {
-  //   logSuccess(`Successfully inserted ${d1Result.value} articles into D1.`);
-  // } else {
-  //   logError('Failed to insert articles into D1', d1Result.reason);
-  // }
-  //
-  // const r2SuccessCount = r2Results.filter(r => r.status === 'fulfilled').length;
-  // logSuccess(`Successfully uploaded ${r2SuccessCount} contents to R2.`);
-  // const r2FailedCount = r2Results.length - r2SuccessCount;
-  // if (r2FailedCount > 0) {
-  //   logError(`${r2FailedCount} content uploads to R2 failed.`);
-  // }
+  // --- Step 2: Upload content to R2 via articles-api ---
+  const articlesApiClient = new ArticlesApiClient();
+  logInfo(`Uploading ${newSupabaseArticles.length} article contents to R2...`);
+
+  const r2UploadPromises = newSupabaseArticles.map(async (article) => {
+    if (article.id && article.content) {
+      return articlesApiClient.saveArticleContent(article.id, article.content);
+    }
+    return false;
+  });
+
+  const r2Results = await Promise.allSettled(r2UploadPromises);
+  const r2SuccessCount = r2Results.filter(
+    (r) => r.status === 'fulfilled' && r.value === true
+  ).length;
+  logSuccess(`Successfully uploaded ${r2SuccessCount}/${newSupabaseArticles.length} contents to R2.`);
+
+  const r2FailedCount = newSupabaseArticles.length - r2SuccessCount;
+  if (r2FailedCount > 0) {
+    logError(`${r2FailedCount} content uploads to R2 failed.`);
+  }
+
+  logInfo(`SHOULD INSERT DATA AMMOUNT: articlesToProcess.length =  ${articlesToProcess.length}`)
+  logInfo(`FINISH INSERTED ARTICLE DATA TO SUPABASE: newSupabaseArticles.length =  ${newSupabaseArticles.length}`)
+  logInfo(`FINISH UPLOAD ARTICLE HTML DATA TO R2: r2 Upload Success:${r2SuccessCount} Failed:{r2FailedCount}`)
+
 
   return { insertedCount: newSupabaseArticles.length, totalArticles: feed.items.length };
 }

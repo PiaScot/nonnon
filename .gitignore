@@ -1,22 +1,19 @@
-.envrc
-.envrc.local
-readme.md
+.env
+*.log
+CLAUDE.md
 
+.claude/
+docs/
 node_modules/
 coverage/
 dist/
 
-.env
-*.log
-__tests__
-
-.claude
-CLAUDE.md
-instructions/
-docs/
-migrations/
-
-diagnostics/
+src/diagnostics/
+src/__tests__
 
 
-articles-api/
+articles-api/node_modules/
+articles-api/.wrangler/
+articles-api/dist/
+articles-api/.dev.vars
+articles-api/pnpm-lock.yaml

@@ -21,23 +21,15 @@ const ConfigSchema = z.object({
   siteTable: z.string(),
   categoryTable: z.string(),
   superCategoryTable: z.string(),
-  bookmarkTable: z.string(),
   allowHostTable: z.string(),
   generalRemoveTagsTable: z.string(),
 
   // RPC functions
   getSitesToScrapeRpc: z.string(),
 
-
-  // Couldflare
-
-  // cloudflareAccountId: z.string(),
-  // d1DatabaseId: z.string(),
-  // cloudflareApiToken: z.string(),
-  //
-  // r2AccountId: z.string(),
-  // r2AccessKeyId: z.string(),
-  // r2SecretAccessKey: z.string(),
+  // Cloudflare workers
+  articlesApiUrl: z.string().url('ARTICLES_API_URL must be a valid URL').optional(),
+  articlesApiSecret: z.string().min(1, 'ARTICLES_API_SECRET is required').optional(),
 
   // Application settings
   maxArticles: z.number().int().positive(),
@@ -82,6 +74,7 @@ function loadConfig(): AppConfig {
   const rawConfig = {
     supabaseUrl: process.env.SUPABASE_URL,
     supabaseRoleKey: process.env.SUPABASE_ROLE_KEY,
+
     articleTable: process.env.ARTICLE_TABLE,
     siteTable: process.env.SITE_TABLE,
     categoryTable: process.env.CATEGORY_TABLE,
@@ -89,21 +82,18 @@ function loadConfig(): AppConfig {
     superCategoryTable: process.env.SUPER_CATEGORY_TABLE,
     allowHostTable: process.env.ALLOW_HOST_TABLE,
     generalRemoveTagsTable: process.env.GENERAL_REMOVE_TAGS_TABLE,
+
     getSitesToScrapeRpc: process.env.GET_SITES_TO_SCRAPE_RPC,
 
+    articlesApiUrl: process.env.ARTICLES_API_URL,
+    articlesApiSecret: process.env.ARTICLES_API_SECRET,
 
-    cloudflareAccountId: process.env.CLOUDFLARE_ACCOUNT_ID,
-    d1DatabaseId: process.env.D1_DATABASE_ID,
-    cloudflareApiToken: process.env.CLOUDFLARE_API_TOKEN,
-
-    r2AccountId: process.env.R2_ACCOUNT_ID,
-    r2AccessKeyId: process.env.R2_ACCESS_KEY_ID,
-    r2SecretAccessKey: process.env.R2_SECRET_ACCESS_KEY,
     maxArticles: process.env.MAX_ARTICLES ? parseInt(process.env.MAX_ARTICLES, 10) : undefined,
     batchSize: process.env.BATCH_SIZE ? parseInt(process.env.BATCH_SIZE, 10) : undefined,
     scrapeConcurrency: process.env.SCRAPE_CONCURRENCY
       ? parseInt(process.env.SCRAPE_CONCURRENCY, 10)
       : undefined,
+
     nodeEnv: process.env.NODE_ENV,
     pcUserAgents: undefined,
     mobileUserAgents: undefined,
