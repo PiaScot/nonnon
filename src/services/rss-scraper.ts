@@ -110,7 +110,7 @@ export async function scrapeSite(
 
   logInfo(`SHOULD INSERT DATA AMMOUNT: articlesToProcess.length =  ${articlesToProcess.length}`)
   logInfo(`FINISH INSERTED ARTICLE DATA TO SUPABASE: newSupabaseArticles.length =  ${newSupabaseArticles.length}`)
-  logInfo(`FINISH UPLOAD ARTICLE HTML DATA TO R2: r2 Upload Success:${r2SuccessCount} Failed:{r2FailedCount}`)
+  logInfo(`FINISH UPLOAD ARTICLE HTML DATA TO R2: r2 Upload Success:${r2SuccessCount} Failed: ${r2FailedCount}`)
 
 
   return { insertedCount: newSupabaseArticles.length, totalArticles: feed.items.length };
