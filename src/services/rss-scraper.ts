@@ -62,7 +62,6 @@ export async function scrapeSite(
   for (const item of feed.items) {
     const link = item.link?.split('?')[0].trim();
     if (!link || existingUrls.has(link)) {
-      if (link) logInfo(`Article already exists, skipping. URL: ${link}`);
       continue;
     }
 
@@ -77,22 +76,25 @@ export async function scrapeSite(
     return { insertedCount: 0, totalArticles: feed.items.length };
   }
 
-  // --- Step 1: Insert into Supabase to get IDs ---
-  logInfo(`Inserting ${articlesToProcess.length} articles into Supabase...`);
-  const newSupabaseArticles = await articleRepo.insertMany(articlesToProcess);
+  const articlesToInsert = articlesToProcess.map(({ content, ...rest }) => rest);
+  const contentsMap = new Map(
+    articlesToProcess.map((a) => [a.url, a.content])
+  );
+
+  const newSupabaseArticles = await articleRepo.insertMany(articlesToInsert);
   logSuccess(`Successfully inserted ${newSupabaseArticles.length} articles into Supabase.`);
 
   if (newSupabaseArticles.length === 0) {
     return { insertedCount: 0, totalArticles: feed.items.length };
   }
 
-  // --- Step 2: Upload content to R2 via articles-api ---
   const articlesApiClient = new ArticlesApiClient();
   logInfo(`Uploading ${newSupabaseArticles.length} article contents to R2...`);
 
   const r2UploadPromises = newSupabaseArticles.map(async (article) => {
-    if (article.id && article.content) {
-      return articlesApiClient.saveArticleContent(article.id, article.content);
+    const content = contentsMap.get(article.url);
+    if (article.id && content) {
+      return articlesApiClient.saveArticleContent(article.id, content);
     }
     return false;
   });
@@ -107,11 +109,6 @@ export async function scrapeSite(
   if (r2FailedCount > 0) {
     logError(`${r2FailedCount} content uploads to R2 failed.`);
   }
-
-  logInfo(`SHOULD INSERT DATA AMMOUNT: articlesToProcess.length =  ${articlesToProcess.length}`)
-  logInfo(`FINISH INSERTED ARTICLE DATA TO SUPABASE: newSupabaseArticles.length =  ${newSupabaseArticles.length}`)
-  logInfo(`FINISH UPLOAD ARTICLE HTML DATA TO R2: r2 Upload Success:${r2SuccessCount} Failed: ${r2FailedCount}`)
-
 
   return { insertedCount: newSupabaseArticles.length, totalArticles: feed.items.length };
 }
