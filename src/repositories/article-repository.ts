@@ -154,7 +154,8 @@ export class ArticleRepository extends BaseRepository {
     if (articles.length === 0) return [];
 
     try {
-      const { data, error } = await this.client.from(this.tableName).insert(articles).select('*');
+      const sanitizedArticles = articles.map(({ content, ...rest }) => rest);
+      const { data, error } = await this.client.from(this.tableName).insert(sanitizedArticles).select('*');
 
       if (error) {
         // Handle duplicate key error
