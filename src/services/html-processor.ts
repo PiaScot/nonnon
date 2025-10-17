@@ -89,6 +89,7 @@ function injectResetCSS($: cheerio.CheerioAPI): void {
         margin: 0;
         padding: 0;
         box-sizing: border-box;
+        line-height: 0px;
       }
 
       /* ブラウザデフォルトスタイル除去 */
@@ -109,31 +110,15 @@ function injectResetCSS($: cheerio.CheerioAPI): void {
         font-size: 16px;
       }
 
-        img, video, iframe {
-          max-width: 100%;
-          height: auto;
-          display: block;
-        }
-        
-        /*
-        * Patch for basic2013.css
-        * The following rule causes the WebView's height calculation to fail,
-        * resulting in a disabled scroll. This override resets the height
-        * and line-height for these specific elements to their default '0px' values.
-        * IMPORTANT: Do NOT apply line-height to <a> tags to avoid scroll issues.
-        */
-        .button-link a,
-        .prev-link a,
-        .back-link a,
-        a.button-link,
-        a.prev-link,
-        a.back-link {
-          line-height: 0;
-          height: 0;
-        }
-      </style>
-    `;
+      img, video, iframe {
+        max-width: 100%;
+        height: auto;
+        display: block;
+      }
+    </style>
+  `;
 
+  // Insert at the beginning of <head>
   const head = $('head');
   if (head.length > 0) {
     head.prepend(resetCSS);
